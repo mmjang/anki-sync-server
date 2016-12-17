@@ -26,7 +26,7 @@ import random
 import string
 import unicodedata
 import zipfile
-
+import time
 import AnkiServer
 
 import anki
@@ -222,9 +222,10 @@ class SyncMediaHandler(MediaSyncer):
 
         # Mark the files as deleted in our db.
         self.col.media.db.executemany("UPDATE media " +
-                                      "SET csum = NULL " +
+                                      "SET csum = NULL," +
+                                      " mtime = ?" +
                                       " WHERE fname = ?",
-                                      [(f, ) for f in filenames])
+                                      [(int(time.time()), f) for f in filenames])
 
         # Remove the files from our media directory if it is present.
         logging.debug('Removing %d files from media dir.' % len(filenames))
@@ -263,8 +264,13 @@ class SyncMediaHandler(MediaSyncer):
         fname = csum = None
 
         if lastUsn < usn or lastUsn == 0:
-            for fname,mtime,csum, in self.col.media.db.execute("select fname,mtime,csum from media"):
-                result.append([fname, usn, csum])
+            num_of_changes = usn - lastUsn
+            change_from = 0
+            for mtime, in self.col.media.db.execute("select mtime from media order by mtime DESC limit %d"%num_of_changes):
+                change_from = mtime
+            for fname, csum, mtime, in self.col.media.db.execute("select fname, csum, mtime from media where mtime >= %d"%change_from):
+                if not csum: csum = ''
+                result.append([fname,usn, csum])
 
         return json.dumps({'data':result, 'err':''})
 
@@ -471,6 +477,7 @@ class SyncApp(object):
             os.rename(temp_db_path, session.get_collection_path())
         finally:
             col.reopen()
+            col.load()
 
         # If everything went fine, run hook_upload if one is defined.
         if self.hook_upload is not None:
@@ -488,6 +495,7 @@ class SyncApp(object):
             data = open(session.get_collection_path(), 'rb').read()
         finally:
             col.reopen()
+            col.load()
         return data
 
     @wsgify
